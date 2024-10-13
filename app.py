@@ -21,6 +21,9 @@ custom_css = """
 """
 html(custom_css)
 
+# Display the logistics image above the header
+st.image("Logistic image.png", caption="Logistics Management", use_column_width=True)
+
 # Connect to SQLite database
 conn = sqlite3.connect('logistics.db')
 cursor = conn.cursor()
