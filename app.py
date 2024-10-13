@@ -131,13 +131,20 @@ elif menu == "Admin":
 
     # View analytics
     st.subheader("Fleet Analytics")
+
+    # Total completed trips
     cursor.execute('SELECT COUNT(*) FROM bookings WHERE status = "delivered"')
     completed_trips = cursor.fetchone()[0]
     st.write(f"Total Completed Trips: {completed_trips}")
-    
+
+    # Average trip cost
     cursor.execute('SELECT AVG(estimated_cost) FROM bookings WHERE status = "delivered"')
     avg_cost = cursor.fetchone()[0]
-    st.write(f"Average Trip Cost: ${avg_cost:.2f}")
+
+    if avg_cost is not None:
+        st.write(f"Average Trip Cost: ${avg_cost:.2f}")
+    else:
+        st.write("Average Trip Cost: N/A")
 
 # Close the database connection when done
 conn.close()
