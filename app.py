@@ -245,6 +245,7 @@ elif menu == "Driver":
     st.write(f"Total Earnings: ${earnings:.2f}")
 
 # Admin Section
+# Admin Section
 elif menu == "Admin":
     st.write('<div class="big-title">Admin Dashboard</div>', unsafe_allow_html=True)
     
@@ -256,15 +257,20 @@ elif menu == "Admin":
     if all_bookings:
         df = pd.DataFrame(all_bookings, columns=['ID', 'User', 'Driver', 'Pickup', 'Dropoff', 'Vehicle Type', 'Estimated Cost', 'Status', 'Favorite Driver'])
         st.dataframe(df)
-    
+    else:
+        st.write("No bookings found.")
+
     # View all drivers
     st.write('<div class="sub-title">All Drivers</div>', unsafe_allow_html=True)
     cursor.execute('SELECT * FROM drivers')
     all_drivers = cursor.fetchall()
 
     if all_drivers:
+        # Ensure the structure matches the expected column names
         df = pd.DataFrame(all_drivers, columns=['ID', 'Name', 'Vehicle', 'Available', 'Experience', 'Earnings', 'Vehicle Capacity'])
         st.dataframe(df)
+    else:
+        st.write("No drivers found.")
 
     # Admin actions log
     st.write('<div class="sub-title">Admin Logs</div>', unsafe_allow_html=True)
@@ -274,3 +280,7 @@ elif menu == "Admin":
     if admin_logs:
         df = pd.DataFrame(admin_logs, columns=['ID', 'Action', 'Timestamp'])
         st.dataframe(df)
+    else:
+        st.write("No admin actions logged.")
+
+
