@@ -247,16 +247,17 @@ elif menu == "Admin":
     all_bookings = cursor.fetchall()
     
     if all_bookings:
-        df = pd.DataFrame(all_bookings, columns=["ID", "User", "Driver", "Pickup", "Dropoff", "Vehicle Type", "Estimated Cost", "Status"])
-        st.dataframe(df)
+        # Check the structure of all_bookings
+        st.write(f"Total bookings found: {len(all_bookings)}")
+        
+        try:
+            df = pd.DataFrame(all_bookings, columns=["ID", "User", "Driver", "Pickup", "Dropoff", "Vehicle Type", "Estimated Cost", "Status"])
+            st.dataframe(df)
+        except ValueError as e:
+            st.error(f"Error creating DataFrame: {e}")
     else:
         st.warning("No bookings found.")
 
-    # Log admin actions
-    action = st.text_input("Log an action")
-    if st.button("Log Action"):
-        log_admin_action(action)
-        st.success("Action logged successfully!")
 
 # Close the database connection at the end
 conn.close()
