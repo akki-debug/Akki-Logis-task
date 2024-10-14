@@ -8,7 +8,7 @@ from streamlit.components.v1 import html
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from datetime import datetime
+from datetime import datetime, timedelta
 import pandas as pd  # Import Pandas here
 
 # Custom CSS for better UI
@@ -35,20 +35,23 @@ cursor = conn.cursor()
 
 # Create tables for users, drivers, bookings, reviews, and tracking if they don't exist
 cursor.execute('''CREATE TABLE IF NOT EXISTS users 
-                  (id INTEGER PRIMARY KEY, username TEXT, email TEXT)''')
+                  (id INTEGER PRIMARY KEY, username TEXT, email TEXT, password TEXT)''')
 
 cursor.execute('''CREATE TABLE IF NOT EXISTS bookings 
                   (id INTEGER PRIMARY KEY, user TEXT, driver TEXT, pickup TEXT, dropoff TEXT, 
-                   vehicle_type TEXT, estimated_cost REAL, status TEXT)''')
+                   vehicle_type TEXT, estimated_cost REAL, status TEXT, favorite_driver INTEGER DEFAULT 0)''')
 
 cursor.execute('''CREATE TABLE IF NOT EXISTS drivers
-                  (id INTEGER PRIMARY KEY, name TEXT, vehicle TEXT, available INTEGER)''')
+                  (id INTEGER PRIMARY KEY, name TEXT, vehicle TEXT, available INTEGER, earnings REAL DEFAULT 0)''')
 
 cursor.execute('''CREATE TABLE IF NOT EXISTS tracking
                   (id INTEGER PRIMARY KEY, booking_id INTEGER, latitude REAL, longitude REAL)''')
 
 cursor.execute('''CREATE TABLE IF NOT EXISTS reviews 
                   (id INTEGER PRIMARY KEY, booking_id INTEGER, rating INTEGER, feedback TEXT)''')
+
+cursor.execute('''CREATE TABLE IF NOT EXISTS admin_logs 
+                  (id INTEGER PRIMARY KEY, action TEXT, timestamp TEXT)''')
 
 conn.commit()
 
@@ -90,6 +93,18 @@ def send_email(to_address, subject, body):
     except Exception as e:
         st.error(f"Failed to send email: {e}")
 
+# Function to log admin actions
+def log_admin_action(action):
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cursor.execute('INSERT INTO admin_logs (action, timestamp) VALUES (?, ?)', (action, timestamp))
+    conn.commit()
+
+# Function to calculate earnings for drivers
+def calculate_earnings(driver_name):
+    cursor.execute('SELECT SUM(estimated_cost) FROM bookings WHERE driver = ? AND status = "delivered"', (driver_name,))
+    earnings = cursor.fetchone()[0] or 0
+    return earnings
+
 # Title and app navigation
 st.title("On-Demand Logistics Platform")
 menu = st.sidebar.radio("Navigation", ["User", "Driver", "Admin"])
@@ -101,10 +116,19 @@ if menu == "User":
     st.write("### User Registration/Login")
     username = st.text_input("Username")
     email = st.text_input("Email")
+    password = st.text_input("Password", type="password")
     if st.button("Register/Login"):
-        cursor.execute('INSERT OR IGNORE INTO users (username, email) VALUES (?, ?)', (username, email))
+        cursor.execute('INSERT OR IGNORE INTO users (username, email, password) VALUES (?, ?, ?)', (username, email, password))
         conn.commit()
         st.success("User registered/logged in successfully!")
+
+    # Update profile
+    if st.button("Update Profile"):
+        new_email = st.text_input("New Email", value=email)
+        new_password = st.text_input("New Password", type="password")
+        cursor.execute('UPDATE users SET email = ?, password = ? WHERE username = ?', (new_email, new_password, username))
+        conn.commit()
+        st.success("Profile updated successfully!")
 
     # User inputs
     pickup = st.text_input("Pickup Location (latitude,longitude)", "40.7128,-74.0060")
@@ -124,6 +148,13 @@ if menu == "User":
         
         # Send confirmation email
         send_email(email, "Booking Confirmation", f"Your booking for a {vehicle_type} has been confirmed!")
+
+    # Option to cancel booking
+    booking_id = st.number_input("Enter Booking ID to cancel", min_value=1)
+    if st.button("Cancel Booking"):
+        cursor.execute('DELETE FROM bookings WHERE id = ? AND status = "booked"', (booking_id,))
+        conn.commit()
+        st.success(f"Booking {booking_id} canceled successfully!")
 
     # Option to track bookings
     st.write('<div class="big-title">Track Your Vehicle</div>', unsafe_allow_html=True)
@@ -161,6 +192,19 @@ if menu == "User":
             conn.commit()
             st.success("Feedback submitted successfully!")
 
+        # Mark favorite driver
+        if st.button(f"Mark Driver {booking[2]} as Favorite"):
+            cursor.execute('UPDATE bookings SET favorite_driver = 1 WHERE id = ?', (booking_id,))
+            conn.commit()
+            st.success(f"Driver {booking[2]} marked as favorite!")
+
+    # View booking history
+    st.write('<div class="big-title">Booking History</div>', unsafe_allow_html=True)
+    cursor.execute('SELECT * FROM bookings WHERE user = ?', (username,))
+    user_bookings = cursor.fetchall()
+    for ub in user_bookings:
+        st.write(f"Booking ID: {ub[0]}, Vehicle: {ub[5]}, Status: {ub[7]}, Favorite Driver: {ub[8]}")
+
 elif menu == "Driver":
     st.write('<div class="big-title">Driver Dashboard</div>', unsafe_allow_html=True)
 
@@ -183,6 +227,22 @@ elif menu == "Driver":
             conn.commit()
             st.success(f"Job {booking[0]} accepted!")
 
+    # Update location for tracking
+    st.write('<div class="sub-title">Update Location</div>', unsafe_allow_html=True)
+    new_latitude = st.number_input("Enter New Latitude", format="%.6f")
+    new_longitude = st.number_input("Enter New Longitude", format="%.6f")
+    if st.button("Update Location"):
+        cursor.execute('UPDATE tracking SET latitude = ?, longitude = ? WHERE booking_id = ?', 
+                       (new_latitude, new_longitude, booking_id))
+        conn.commit()
+        st.success("Location updated successfully!")
+
+    # View earnings dashboard
+    st.write('<div class="big-title">Earnings Dashboard</div>', unsafe_allow_html=True)
+    driver_name = st.text_input("Enter Driver Name")
+    earnings = calculate_earnings(driver_name)
+    st.write(f"Total Earnings: ${earnings:.2f}")
+
 elif menu == "Admin":
     st.write('<div class="big-title">Admin Dashboard</div>', unsafe_allow_html=True)
 
@@ -202,6 +262,13 @@ elif menu == "Admin":
     st.write(f"Delivered Bookings: {delivered_bookings}")
     st.write(f"Average Rating: {avg_rating:.2f}")
 
+    # Admin log view
+    st.write('<div class="big-title">Admin Logs</div>', unsafe_allow_html=True)
+    cursor.execute('SELECT * FROM admin_logs')
+    logs = cursor.fetchall()
+    for log in logs:
+        st.write(f"Action: {log[1]}, Timestamp: {log[2]}")
+
     # Manage Users Section
     st.write('<div class="big-title">User Management</div>', unsafe_allow_html=True)
     cursor.execute('SELECT * FROM users')
@@ -212,6 +279,7 @@ elif menu == "Admin":
         if st.button(f"Remove User {user[0]}", key=f"remove-user-{user[0]}"):
             cursor.execute('DELETE FROM users WHERE id = ?', (user[0],))
             conn.commit()
+            log_admin_action(f"Removed user {user[1]}")
             st.success(f"User {user[1]} removed.")
 
     # Manage Drivers Section
@@ -239,6 +307,7 @@ elif menu == "Admin":
         if st.button(f"Complete Booking {booking[0]}", key=f"complete-booking-{booking[0]}"):
             cursor.execute('UPDATE bookings SET status = ? WHERE id = ?', ("delivered", booking[0]))
             conn.commit()
+            log_admin_action(f"Completed booking {booking[0]}")
             st.success(f"Booking {booking[0]} completed.")
 
     # Review Moderation Section
@@ -251,7 +320,8 @@ elif menu == "Admin":
         if st.button(f"Delete Review {review[0]}", key=f"delete-review-{review[0]}"):
             cursor.execute('DELETE FROM reviews WHERE id = ?', (review[0],))
             conn.commit()
+            log_admin_action(f"Deleted review {review[0]}")
             st.success(f"Review {review[0]} deleted.")
 
 # Close the database connection
-conn.close() 
+conn.close()
