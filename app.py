@@ -33,7 +33,7 @@ st.image("Logistic image.png", caption="Logistics Management", use_column_width=
 conn = sqlite3.connect('logistics.db')
 cursor = conn.cursor()
 
-# Create tables for users, drivers, bookings, reviews, tracking if they don't exist
+# Create tables if they don't exist
 cursor.execute('''CREATE TABLE IF NOT EXISTS users 
                   (id INTEGER PRIMARY KEY, username TEXT, email TEXT, password TEXT)''')
 
@@ -106,6 +106,11 @@ def calculate_earnings(driver_name):
     earnings = cursor.fetchone()[0] or 0
     return earnings
 
+# Function to add feedback for bookings
+def add_feedback(booking_id, rating, feedback):
+    cursor.execute('INSERT INTO reviews (booking_id, rating, feedback) VALUES (?, ?, ?)', (booking_id, rating, feedback))
+    conn.commit()
+
 # Title and app navigation
 st.title("On-Demand Logistics Platform")
 menu = st.sidebar.radio("Navigation", ["User", "Driver", "Admin"])
@@ -132,7 +137,7 @@ if menu == "User":
         conn.commit()
         st.success("Profile updated successfully!")
 
-    # User inputs
+    # User inputs for booking
     pickup = st.text_input("Pickup Location (latitude,longitude)", "40.7128,-74.0060")
     dropoff = st.text_input("Dropoff Location (latitude,longitude)", "40.730610,-73.935242")
     vehicle_type = st.selectbox("Select Vehicle", ['car', 'van', 'truck'])
@@ -157,22 +162,6 @@ if menu == "User":
             # Send confirmation email
             send_email(email, "Booking Confirmation", f"Your booking for a {vehicle_type} has been confirmed for {booking_datetime}!")
 
-            # Get the ID of the last booking for feedback
-            booking_id = cursor.lastrowid
-            
-            # Add feedback section
-            feedback_rating = st.number_input("Rate your experience (1-5)", min_value=1, max_value=5)
-            feedback_text = st.text_area("Provide your feedback")
-            
-            if st.button("Submit Feedback"):
-                try:
-                    cursor.execute('INSERT INTO reviews (booking_id, rating, feedback) VALUES (?, ?, ?)', 
-                                   (booking_id, feedback_rating, feedback_text))
-                    conn.commit()
-                    st.success("Feedback submitted successfully!")
-                except sqlite3.Error as e:
-                    st.error(f"An error occurred while submitting feedback: {e}")
-
         except sqlite3.Error as e:
             st.error(f"An error occurred while booking: {e}")
 
@@ -191,29 +180,36 @@ if menu == "User":
     tracking_booking_id = st.number_input("Enter Booking ID", min_value=1)
     
     cursor.execute('SELECT * FROM bookings WHERE id = ?', (tracking_booking_id,))
-    tracking_info = cursor.fetchone()
-    
-    if tracking_info:
-        # Display booking information
-        st.write(f"**User:** {tracking_info[1]}")
-        st.write(f"**Driver:** {tracking_info[2]}")
-        st.write(f"**Pickup:** {tracking_info[3]}")
-        st.write(f"**Dropoff:** {tracking_info[4]}")
-        st.write(f"**Vehicle Type:** {tracking_info[5]}")
-        st.write(f"**Estimated Cost:** ${tracking_info[6]:.2f}")
-        st.write(f"**Status:** {tracking_info[7]}")
+    booking = cursor.fetchone()
 
-        # Display map if the booking is active
-        if tracking_info[7] == "in_progress":
-            mock_lat, mock_lon = get_mock_gps()
-            m = folium.Map(location=[mock_lat, mock_lon], zoom_start=14)
-            folium.Marker([mock_lat, mock_lon], tooltip="Your Vehicle").add_to(m)
-            st_folium(m)
+    if booking:
+        st.write(f"**Booking Status: {booking[7]}**")
+        
+        if booking[7] != 'booked':
+            # Show real-time map tracking
+            cursor.execute('SELECT * FROM tracking WHERE booking_id = ?', (tracking_booking_id,))
+            tracking_data = cursor.fetchone()
+            
+            if tracking_data:
+                latitude, longitude = tracking_data[2], tracking_data[3]
+                map_center = [latitude, longitude]
+                folium_map = folium.Map(location=map_center, zoom_start=14)
+                folium.Marker(map_center, tooltip="Current Location").add_to(folium_map)
+                st_folium(folium_map, width=725)
+            else:
+                st.warning("No tracking data available yet.")
+        else:
+            st.warning("Booking is still being processed. Please check back later.")
+    else:
+        st.warning("Booking ID not found.")
 
-    # Option to view past bookings
+    # View past bookings
     st.write('<div class="big-title">View Past Bookings</div>', unsafe_allow_html=True)
     cursor.execute('SELECT * FROM bookings WHERE user = ?', (username,))
     past_bookings = cursor.fetchall()
+
+    # Debugging output
+    st.write("Debugging Output: Past Bookings Data", past_bookings)
 
     if past_bookings:
         past_bookings_df = pd.DataFrame(past_bookings, columns=["ID", "User", "Driver", "Pickup", "Dropoff", "Vehicle Type", "Estimated Cost", "Status"])
@@ -221,83 +217,84 @@ if menu == "User":
     else:
         st.warning("No past bookings found.")
 
+    # Add feedback for past bookings
+    feedback_booking_id = st.number_input("Enter Booking ID to provide feedback", min_value=1)
+    feedback_rating = st.slider("Rating (1-5)", 1, 5)
+    feedback_text = st.text_area("Feedback")
+    
+    if st.button("Submit Feedback"):
+        add_feedback(feedback_booking_id, feedback_rating, feedback_text)
+        st.success("Feedback submitted successfully!")
+
 # Driver Section
 elif menu == "Driver":
     st.write('<div class="big-title">Driver Dashboard</div>', unsafe_allow_html=True)
+    driver_name = st.text_input("Enter your name")
 
-    # Driver login
-    driver_name = st.text_input("Driver Name")
-    password = st.text_input("Password", type="password")
+    if st.button("Login as Driver"):
+        earnings = calculate_earnings(driver_name)
+        st.write(f"**Your total earnings: ${earnings:.2f}**")
 
-    if st.button("Login"):
-        cursor.execute('SELECT * FROM drivers WHERE name = ? AND password = ?', (driver_name, password))
-        driver_info = cursor.fetchone()
+        # View active bookings
+        cursor.execute('SELECT * FROM bookings WHERE driver = ? AND status = "booked"', (driver_name,))
+        active_bookings = cursor.fetchall()
 
-        if driver_info:
-            st.success("Login successful!")
-
-            # Display driver details
-            st.write(f"**Name:** {driver_info[1]}")
-            st.write(f"**Vehicle:** {driver_info[2]}")
-            st.write(f"**Available:** {'Yes' if driver_info[3] else 'No'}")
-            st.write(f"**Experience:** {driver_info[4]} years")
-            st.write(f"**Earnings:** ${driver_info[5]:.2f}")
-
-            # Accepting bookings
+        if active_bookings:
+            active_bookings_df = pd.DataFrame(active_bookings, columns=["ID", "User", "Pickup", "Dropoff", "Vehicle Type", "Estimated Cost", "Status"])
+            st.dataframe(active_bookings_df)
             if st.button("Accept Booking"):
-                # Logic to accept booking (mocked for simplicity)
-                st.success("Booking accepted!")
-                # Update driver earnings
-                earnings = calculate_earnings(driver_name)
-                st.write(f"Total earnings: ${earnings:.2f}")
-
-            # Track earnings
-            if st.button("Track Earnings"):
-                earnings = calculate_earnings(driver_name)
-                st.write(f"Total earnings: ${earnings:.2f}")
+                # Logic to accept booking
+                booking_id_to_accept = st.number_input("Enter Booking ID to accept", min_value=1)
+                cursor.execute('UPDATE bookings SET driver = ?, status = "accepted" WHERE id = ?', (driver_name, booking_id_to_accept))
+                conn.commit()
+                st.success(f"Booking {booking_id_to_accept} accepted successfully!")
 
         else:
-            st.error("Invalid login credentials.")
+            st.warning("No active bookings found.")
+
+        # Option to update vehicle status
+        if st.button("Mark as Delivered"):
+            delivered_booking_id = st.number_input("Enter Booking ID to mark as delivered", min_value=1)
+            cursor.execute('UPDATE bookings SET status = "delivered" WHERE id = ?', (delivered_booking_id,))
+            conn.commit()
+            st.success(f"Booking {delivered_booking_id} marked as delivered!")
 
 # Admin Section
 elif menu == "Admin":
     st.write('<div class="big-title">Admin Dashboard</div>', unsafe_allow_html=True)
-
-    # Admin login
     admin_username = st.text_input("Admin Username")
     admin_password = st.text_input("Admin Password", type="password")
 
-    if st.button("Login"):
-        # Mocking admin authentication
-        if admin_username == "admin" and admin_password == "admin":
-            st.success("Admin login successful!")
+    if st.button("Login as Admin"):
+        # Simple admin check (in a real scenario, use secure authentication)
+        if admin_username == "admin" and admin_password == "password":
+            st.success("Admin logged in successfully!")
 
             # View all bookings
-            st.write("### All Bookings")
+            st.subheader("All Bookings")
             cursor.execute('SELECT * FROM bookings')
             all_bookings = cursor.fetchall()
+            all_bookings_df = pd.DataFrame(all_bookings, columns=["ID", "User", "Driver", "Pickup", "Dropoff", "Vehicle Type", "Estimated Cost", "Status"])
+            st.dataframe(all_bookings_df)
 
-            if all_bookings:
-                # Check the structure of all_bookings
-                st.write(f"Total bookings found: {len(all_bookings)}")
-                
-                # Create a DataFrame for bookings
-                df_bookings = pd.DataFrame(all_bookings, columns=["ID", "User", "Driver", "Pickup", "Dropoff", "Vehicle Type", "Estimated Cost", "Status"])
-                st.dataframe(df_bookings)
-            else:
-                st.warning("No bookings found.")
+            # View driver earnings
+            st.subheader("Driver Earnings")
+            cursor.execute('SELECT name, SUM(estimated_cost) FROM drivers LEFT JOIN bookings ON drivers.name = bookings.driver GROUP BY name')
+            driver_earnings = cursor.fetchall()
+            st.write(driver_earnings)
 
-            # View user feedback
-            st.write('<div class="big-title">User Feedback</div>', unsafe_allow_html=True)
+            # Log admin actions
+            if st.button("Log Admin Action"):
+                log_admin_action("Admin accessed dashboard")
+                st.success("Admin action logged.")
 
-            cursor.execute('SELECT * FROM reviews')
-            all_feedback = cursor.fetchall()
+            # View admin logs
+            st.subheader("Admin Logs")
+            cursor.execute('SELECT * FROM admin_logs')
+            admin_logs = cursor.fetchall()
+            admin_logs_df = pd.DataFrame(admin_logs, columns=["ID", "Action", "Timestamp"])
+            st.dataframe(admin_logs_df)
 
-            if all_feedback:
-                feedback_data = pd.DataFrame(all_feedback, columns=["ID", "Booking ID", "Rating", "Feedback"])
-                st.dataframe(feedback_data)
-            else:
-                st.warning("No feedback available.")
         else:
             st.error("Invalid admin credentials.")
 
