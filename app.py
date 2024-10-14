@@ -5,9 +5,8 @@ import random
 import folium
 from streamlit_folium import st_folium
 from streamlit.components.v1 import html
-import matplotlib.pyplot as plt
-import altair as alt
 import smtplib
+from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 # Custom CSS for better UI
@@ -35,7 +34,7 @@ cursor = conn.cursor()
 # Create tables for users, drivers, and bookings
 cursor.execute('''CREATE TABLE IF NOT EXISTS bookings 
               (id INTEGER PRIMARY KEY, user TEXT, driver TEXT, pickup TEXT, dropoff TEXT, 
-               vehicle_type TEXT, estimated_cost REAL, status TEXT, date TEXT)''')
+               vehicle_type TEXT, estimated_cost REAL, status TEXT)''')
 
 cursor.execute('''CREATE TABLE IF NOT EXISTS drivers
               (id INTEGER PRIMARY KEY, name TEXT, vehicle TEXT, available INTEGER)''')
@@ -45,41 +44,41 @@ cursor.execute('''CREATE TABLE IF NOT EXISTS tracking
 
 conn.commit()
 
-# Function to estimate price with dynamic pricing based on demand
+# Function to estimate price
 def estimate_price(pickup, dropoff, vehicle_type):
     pickup_coords = tuple(map(float, pickup.split(',')))
     dropoff_coords = tuple(map(float, dropoff.split(',')))
     dist = geodesic(pickup_coords, dropoff_coords).km
     base_price = 5  # base price
     vehicle_multiplier = {'truck': 2, 'van': 1.5, 'car': 1.2}
-    
-    # Dynamic pricing based on demand
-    cursor.execute('SELECT COUNT(*) FROM bookings WHERE status="booked"')
-    active_jobs = cursor.fetchone()[0]
-    cursor.execute('SELECT COUNT(*) FROM drivers WHERE available=1')
-    available_drivers = cursor.fetchone()[0]
-    
-    if available_drivers > 0 and active_jobs >= available_drivers:
-        base_price *= 1.2  # Increase price by 20% during high demand
-    
     return base_price + dist * vehicle_multiplier.get(vehicle_type, 1)
 
 # Function to mock GPS location for tracking
 def get_mock_gps():
     return (40.7128 + random.uniform(-0.01, 0.01), -74.0060 + random.uniform(-0.01, 0.01))
 
-# Function to send an email notification
-def send_email_notification(to_email, subject, message):
+# Function to send email notifications
+def send_email(to_address, subject, body):
     try:
-        msg = MIMEText(message)
-        msg['Subject'] = subject
-        msg['From'] = 'your_email@example.com'
-        msg['To'] = to_email
+        from_address = "your_email@gmail.com"
+        password = "your_app_specific_password"  # use app-specific password if 2FA is on
 
-        with smtplib.SMTP('smtp.example.com', 587) as server:
-            server.starttls()
-            server.login('your_email@example.com', 'your_password')
-            server.sendmail('your_email@example.com', to_email, msg.as_string())
+        # Set up MIME
+        msg = MIMEMultipart()
+        msg['From'] = from_address
+        msg['To'] = to_address
+        msg['Subject'] = subject
+        msg.attach(MIMEText(body, 'plain'))
+
+        # Establish an SMTP connection
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()  # Start TLS encryption
+        server.login(from_address, password)  # Login to the server
+        
+        # Send email
+        server.sendmail(from_address, to_address, msg.as_string())
+        server.quit()
+        st.success("Confirmation email sent successfully!")
     except Exception as e:
         st.error(f"Failed to send email: {e}")
 
@@ -94,8 +93,6 @@ if menu == "User":
     pickup = st.text_input("Pickup Location (latitude,longitude)", "40.7128,-74.0060")
     dropoff = st.text_input("Dropoff Location (latitude,longitude)", "40.730610,-73.935242")
     vehicle_type = st.selectbox("Select Vehicle", ['car', 'van', 'truck'])
-    date = st.date_input("Select Date for Booking")
-    
     estimated_cost = estimate_price(pickup, dropoff, vehicle_type)
     
     st.write(f"**Estimated Price: ${estimated_cost:.2f}**")
@@ -103,11 +100,13 @@ if menu == "User":
     if st.button("Book Now", key="user-book"):
         # Insert booking into database
         cursor.execute('''INSERT INTO bookings (user, driver, pickup, dropoff, vehicle_type, 
-                         estimated_cost, status, date) VALUES (?, ?, ?, ?, ?, ?, ?, ?)''', 
-                       ("user1", "unassigned", pickup, dropoff, vehicle_type, estimated_cost, "booked", date))
+                         estimated_cost, status) VALUES (?, ?, ?, ?, ?, ?, ?)''', 
+                       ("user1", "unassigned", pickup, dropoff, vehicle_type, estimated_cost, "booked"))
         conn.commit()
         st.success("Booking successful!")
-        send_email_notification("user_email@example.com", "Booking Confirmation", f"Your booking for {vehicle_type} is confirmed!")
+        
+        # Send confirmation email
+        send_email("recipient@example.com", "Booking Confirmation", f"Your booking for a {vehicle_type} has been confirmed!")
 
     # Option to track bookings
     st.write('<div class="big-title">Track Your Vehicle</div>', unsafe_allow_html=True)
@@ -119,7 +118,7 @@ if menu == "User":
     if booking:
         st.write(f"**Booking Status: {booking[7]}**")
         
-        if booking[7] != 'booked':
+        if booking[6] != 'booked':
             # Show real-time map tracking
             cursor.execute('SELECT * FROM tracking WHERE booking_id = ?', (booking_id,))
             tracking_data = cursor.fetchone()
@@ -185,19 +184,13 @@ elif menu == "Admin":
     for driver in drivers:
         st.write(f"Driver: {driver[1]}, Vehicle: {driver[2]}, Available: {'Yes' if driver[3] else 'No'}")
 
-    # Analytics: Completed trips
-    st.write('<div class="sub-title">Completed Trips</div>', unsafe_allow_html=True)
-    cursor.execute('SELECT date, COUNT(*) FROM bookings WHERE status = "delivered" GROUP BY date')
-    trip_data = cursor.fetchall()
-
-    if trip_data:
-        dates, trip_counts = zip(*trip_data)
-        trip_chart = alt.Chart(alt.Data(values=[{'date': d, 'count': c} for d, c in zip(dates, trip_counts)])).mark_line().encode(
-            x='date:T',
-            y='count:Q'
-        )
-        st.altair_chart(trip_chart, use_container_width=True)
-
-# Ensure database changes are committed before closing connection
-conn.commit()
-conn.close()
+    # View analytics
+    st.write('<div class="sub-title">Fleet Analytics</div>', unsafe_allow_html=True)
+    cursor.execute('SELECT COUNT(*) FROM bookings')
+    total_bookings = cursor.fetchone()[0]
+    
+    cursor.execute('SELECT COUNT(*) FROM bookings WHERE status = "delivered"')
+    completed_deliveries = cursor.fetchone()[0]
+    
+    st.write(f"Total Bookings: {total_bookings}")
+    st.write(f"Completed Deliveries: {completed_deliveries}")
