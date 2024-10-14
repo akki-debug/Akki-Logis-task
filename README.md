@@ -1,1 +1,1 @@
-https://akki-logis-task-1.streamlit.app/
+https://akki-logis-task-2.streamlit.app/
