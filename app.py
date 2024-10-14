@@ -8,8 +8,8 @@ from streamlit.components.v1 import html
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from datetime import datetime, timedelta
-import pandas as pd
+from datetime import datetime
+import pandas as pd  # Import Pandas here
 
 # Custom CSS for better UI
 custom_css = """
@@ -33,14 +33,13 @@ st.image("Logistic image.png", caption="Logistics Management", use_column_width=
 conn = sqlite3.connect('logistics.db')
 cursor = conn.cursor()
 
-# Create tables for users, drivers, bookings, reviews, and tracking if they don't exist
+# Create tables for users, drivers, bookings, reviews, tracking if they don't exist
 cursor.execute('''CREATE TABLE IF NOT EXISTS users 
                   (id INTEGER PRIMARY KEY, username TEXT, email TEXT, password TEXT)''')
 
 cursor.execute('''CREATE TABLE IF NOT EXISTS bookings 
                   (id INTEGER PRIMARY KEY, user TEXT, driver TEXT, pickup TEXT, dropoff TEXT, 
-                   vehicle_type TEXT, estimated_cost REAL, status TEXT, favorite_driver INTEGER DEFAULT 0, 
-                   booking_date TEXT)''')
+                   vehicle_type TEXT, estimated_cost REAL, status TEXT, favorite_driver INTEGER DEFAULT 0)''')
 
 cursor.execute('''CREATE TABLE IF NOT EXISTS drivers
                   (id INTEGER PRIMARY KEY, name TEXT, vehicle TEXT, available INTEGER, earnings REAL DEFAULT 0)''')
@@ -139,29 +138,35 @@ if menu == "User":
     
     st.write(f"**Estimated Price: ${estimated_cost:.2f}**")
 
-    # Booking time selection
-    future_booking = st.checkbox("Future Booking?")
-    if future_booking:
-        booking_date = st.date_input("Select Date", datetime.now().date() + timedelta(days=1))
-    else:
-        booking_date = datetime.now().date()
+    # Booking section
+    st.write('<div class="big-title">Book Now</div>', unsafe_allow_html=True)
+    booking_date = st.date_input("Select Booking Date", datetime.now())
+    booking_time = st.time_input("Select Booking Time", datetime.now().time())
 
     if st.button("Book Now", key="user-book"):
-        # Insert booking into database
-        cursor.execute('''INSERT INTO bookings (user, driver, pickup, dropoff, vehicle_type, 
-                         estimated_cost, status, booking_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?)''', 
-                       (username, "unassigned", pickup, dropoff, vehicle_type, estimated_cost, "booked", booking_date))
-        conn.commit()
-        st.success("Booking successful!")
-        
-      
+        booking_datetime = datetime.combine(booking_date, booking_time)
+        try:
+            cursor.execute('''INSERT INTO bookings (user, driver, pickup, dropoff, vehicle_type, 
+                             estimated_cost, status) VALUES (?, ?, ?, ?, ?, ?, ?)''', 
+                           (username, "unassigned", pickup, dropoff, vehicle_type, estimated_cost, "booked"))
+            conn.commit()
+            st.success("Booking successful!")
+            
+            # Send confirmation email
+            send_email(email, "Booking Confirmation", f"Your booking for a {vehicle_type} has been confirmed for {booking_datetime}!")
+
+        except sqlite3.Error as e:
+            st.error(f"An error occurred while booking: {e}")
 
     # Option to cancel booking
     booking_id = st.number_input("Enter Booking ID to cancel", min_value=1)
     if st.button("Cancel Booking"):
-        cursor.execute('DELETE FROM bookings WHERE id = ? AND status = "booked"', (booking_id,))
-        conn.commit()
-        st.success(f"Booking {booking_id} canceled successfully!")
+        try:
+            cursor.execute('DELETE FROM bookings WHERE id = ? AND status = "booked"', (booking_id,))
+            conn.commit()
+            st.success(f"Booking {booking_id} canceled successfully!")
+        except sqlite3.Error as e:
+            st.error(f"An error occurred while canceling the booking: {e}")
 
     # Option to track bookings
     st.write('<div class="big-title">Track Your Vehicle</div>', unsafe_allow_html=True)
@@ -182,96 +187,76 @@ if menu == "User":
                 latitude, longitude = tracking_data[2], tracking_data[3]
             else:
                 latitude, longitude = get_mock_gps()
-                cursor.execute('INSERT INTO tracking (booking_id, latitude, longitude) VALUES (?, ?, ?)',
+                cursor.execute('INSERT INTO tracking (booking_id, latitude, longitude) VALUES (?, ?, ?)', 
                                (booking_id, latitude, longitude))
                 conn.commit()
 
-            m = folium.Map(location=[latitude, longitude], zoom_start=12)
-            folium.Marker([latitude, longitude], popup="Driver Location").add_to(m)
-            st_folium(m, width=700)
+            # Create a Folium map
+            map_ = folium.Map(location=[latitude, longitude], zoom_start=13)
+            folium.Marker([latitude, longitude], popup="Current Location").add_to(map_)
+            st_folium(map_)
+        else:
+            st.warning("Booking is still in progress.")
+    else:
+        st.warning("No booking found with that ID.")
 
-        # User feedback and rating after delivery
-        rating = st.slider("Rate your experience", 1, 5, key=f"rating-{booking_id}")
-        feedback = st.text_area("Leave feedback", key=f"feedback-{booking_id}")
-        
-        if st.button("Submit Review", key=f"review-{booking_id}"):
-            cursor.execute('INSERT INTO reviews (booking_id, rating, feedback) VALUES (?, ?, ?)',
-                           (booking_id, rating, feedback))
-            conn.commit()
-            st.success(f"Thank you for your feedback on Booking {booking_id}!")
-
+# Driver Interface
 elif menu == "Driver":
-    st.write('<div class="big-title">Driver Portal</div>', unsafe_allow_html=True)
+    st.write('<div class="big-title">Driver Dashboard</div>', unsafe_allow_html=True)
 
-    # Driver registration
-    st.write("### Driver Registration")
+    # Driver registration/login
     driver_name = st.text_input("Driver Name")
-    vehicle = st.selectbox("Vehicle Type", ['car', 'van', 'truck'])
+    vehicle_type = st.selectbox("Select Vehicle Type", ['car', 'van', 'truck'])
     
-    if st.button("Register"):
-        cursor.execute('INSERT OR IGNORE INTO drivers (name, vehicle, available) VALUES (?, ?, ?)', 
-                       (driver_name, vehicle, 1))
+    if st.button("Register Driver"):
+        cursor.execute('INSERT INTO drivers (name, vehicle, available) VALUES (?, ?, ?)', (driver_name, vehicle_type, 1))
         conn.commit()
         st.success("Driver registered successfully!")
 
+    # View available drivers
+    st.write("### Available Drivers")
+    cursor.execute('SELECT * FROM drivers WHERE available = 1')
+    available_drivers = cursor.fetchall()
+
+    for driver in available_drivers:
+        st.write(f"Driver ID: {driver[0]}, Name: {driver[1]}, Vehicle: {driver[2]}")
+
     # Accept bookings
-    st.write("### Available Bookings")
-    cursor.execute('SELECT * FROM bookings WHERE driver = "unassigned"')
-    bookings = cursor.fetchall()
+    booking_id = st.number_input("Enter Booking ID to accept", min_value=1)
     
-    for b in bookings:
-        st.write(f"Booking ID: {b[0]}, Pickup: {b[3]}, Dropoff: {b[4]}, Estimated Cost: ${b[6]:.2f}")
-        if st.button(f"Accept Booking {b[0]}", key=f"accept-{b[0]}"):
-            cursor.execute('UPDATE bookings SET driver = ?, status = "in transit" WHERE id = ?', 
-                           (driver_name, b[0]))
+    if st.button("Accept Booking"):
+        try:
+            cursor.execute('UPDATE bookings SET driver = ?, status = "accepted" WHERE id = ?', (driver_name, booking_id))
+            cursor.execute('UPDATE drivers SET available = 0 WHERE name = ?', (driver_name,))
             conn.commit()
-            st.success(f"Booking {b[0]} accepted successfully!")
+            st.success("Booking accepted successfully!")
+        except sqlite3.Error as e:
+            st.error(f"An error occurred while accepting the booking: {e}")
 
-    # Show earnings
-    if st.button("Show My Earnings"):
-        earnings = calculate_earnings(driver_name)
-        st.write(f"**Total Earnings: ${earnings:.2f}**")
+    # View earnings
+    earnings = calculate_earnings(driver_name)
+    st.write(f"**Earnings: ${earnings:.2f}**")
 
-    # Mark bookings as delivered
-    st.write("### My Bookings In Transit")
-    cursor.execute('SELECT * FROM bookings WHERE driver = ? AND status = "in transit"', (driver_name,))
-    in_transit_bookings = cursor.fetchall()
-    
-    for b in in_transit_bookings:
-        st.write(f"Booking ID: {b[0]}, Pickup: {b[3]}, Dropoff: {b[4]}, Estimated Cost: ${b[6]:.2f}")
-        if st.button(f"Mark as Delivered {b[0]}", key=f"delivered-{b[0]}"):
-            cursor.execute('UPDATE bookings SET status = "delivered" WHERE id = ?', (b[0],))
-            conn.commit()
-            st.success(f"Booking {b[0]} marked as delivered!")
-
+# Admin Interface
 elif menu == "Admin":
     st.write('<div class="big-title">Admin Dashboard</div>', unsafe_allow_html=True)
-
-    # View all users
-    st.write("### Users List")
-    cursor.execute('SELECT * FROM users')
-    users = cursor.fetchall()
-    
-    for u in users:
-        st.write(f"User: {u[1]}, Email: {u[2]}")
 
     # View all bookings
     st.write("### All Bookings")
     cursor.execute('SELECT * FROM bookings')
-    bookings = cursor.fetchall()
-
-    for b in bookings:
-        st.write(f"Booking ID: {b[0]}, User: {b[1]}, Driver: {b[2]}, Status: {b[7]}")
-
-    # Admin action logs
-    st.write("### Admin Logs")
-    cursor.execute('SELECT * FROM admin_logs ORDER BY timestamp DESC')
-    logs = cursor.fetchall()
+    all_bookings = cursor.fetchall()
     
-    for log in logs:
-        st.write(f"{log[1]} - {log[2]}")
+    if all_bookings:
+        df = pd.DataFrame(all_bookings, columns=["ID", "User", "Driver", "Pickup", "Dropoff", "Vehicle Type", "Estimated Cost", "Status"])
+        st.dataframe(df)
+    else:
+        st.warning("No bookings found.")
 
-    if st.button("Clear Logs"):
-        cursor.execute('DELETE FROM admin_logs')
-        conn.commit()
-        st.success("Logs cleared!")
+    # Log admin actions
+    action = st.text_input("Log an action")
+    if st.button("Log Action"):
+        log_admin_action(action)
+        st.success("Action logged successfully!")
+
+# Close the database connection at the end
+conn.close()
