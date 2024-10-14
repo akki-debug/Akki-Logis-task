@@ -9,7 +9,7 @@ import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from datetime import datetime, timedelta
-import pandas as pd  # Import Pandas here
+import pandas as pd
 
 # Custom CSS for better UI
 custom_css = """
@@ -39,7 +39,8 @@ cursor.execute('''CREATE TABLE IF NOT EXISTS users
 
 cursor.execute('''CREATE TABLE IF NOT EXISTS bookings 
                   (id INTEGER PRIMARY KEY, user TEXT, driver TEXT, pickup TEXT, dropoff TEXT, 
-                   vehicle_type TEXT, estimated_cost REAL, status TEXT, favorite_driver INTEGER DEFAULT 0)''')
+                   vehicle_type TEXT, estimated_cost REAL, status TEXT, favorite_driver INTEGER DEFAULT 0, 
+                   booking_date TEXT)''')
 
 cursor.execute('''CREATE TABLE IF NOT EXISTS drivers
                   (id INTEGER PRIMARY KEY, name TEXT, vehicle TEXT, available INTEGER, earnings REAL DEFAULT 0)''')
@@ -138,16 +139,23 @@ if menu == "User":
     
     st.write(f"**Estimated Price: ${estimated_cost:.2f}**")
 
+    # Booking time selection
+    future_booking = st.checkbox("Future Booking?")
+    if future_booking:
+        booking_date = st.date_input("Select Date", datetime.now().date() + timedelta(days=1))
+    else:
+        booking_date = datetime.now().date()
+
     if st.button("Book Now", key="user-book"):
         # Insert booking into database
         cursor.execute('''INSERT INTO bookings (user, driver, pickup, dropoff, vehicle_type, 
-                         estimated_cost, status) VALUES (?, ?, ?, ?, ?, ?, ?)''', 
-                       (username, "unassigned", pickup, dropoff, vehicle_type, estimated_cost, "booked"))
+                         estimated_cost, status, booking_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?)''', 
+                       (username, "unassigned", pickup, dropoff, vehicle_type, estimated_cost, "booked", booking_date))
         conn.commit()
         st.success("Booking successful!")
         
         # Send confirmation email
-        send_email(email, "Booking Confirmation", f"Your booking for a {vehicle_type} has been confirmed!")
+        send_email(email, "Booking Confirmation", f"Your booking for a {vehicle_type} on {booking_date} has been confirmed!")
 
     # Option to cancel booking
     booking_id = st.number_input("Enter Booking ID to cancel", min_value=1)
@@ -186,142 +194,85 @@ if menu == "User":
         # User feedback and rating after delivery
         rating = st.slider("Rate your experience", 1, 5, key=f"rating-{booking_id}")
         feedback = st.text_area("Leave feedback", key=f"feedback-{booking_id}")
-        if st.button("Submit Review", key=f"submit-review-{booking_id}"):
+        
+        if st.button("Submit Review", key=f"review-{booking_id}"):
             cursor.execute('INSERT INTO reviews (booking_id, rating, feedback) VALUES (?, ?, ?)',
                            (booking_id, rating, feedback))
             conn.commit()
-            st.success("Feedback submitted successfully!")
-
-        # Mark favorite driver
-        if st.button(f"Mark Driver {booking[2]} as Favorite"):
-            cursor.execute('UPDATE bookings SET favorite_driver = 1 WHERE id = ?', (booking_id,))
-            conn.commit()
-            st.success(f"Driver {booking[2]} marked as favorite!")
-
-    # View booking history
-    st.write('<div class="big-title">Booking History</div>', unsafe_allow_html=True)
-    cursor.execute('SELECT * FROM bookings WHERE user = ?', (username,))
-    user_bookings = cursor.fetchall()
-    for ub in user_bookings:
-        st.write(f"Booking ID: {ub[0]}, Vehicle: {ub[5]}, Status: {ub[7]}, Favorite Driver: {ub[8]}")
+            st.success(f"Thank you for your feedback on Booking {booking_id}!")
 
 elif menu == "Driver":
-    st.write('<div class="big-title">Driver Dashboard</div>', unsafe_allow_html=True)
+    st.write('<div class="big-title">Driver Portal</div>', unsafe_allow_html=True)
 
-    # Driver availability scheduling
-    st.write('<div class="sub-title">Set Availability</div>', unsafe_allow_html=True)
-    availability_start = st.time_input("Available from", datetime.now().time())
-    availability_end = st.time_input("Available until", datetime.now().time())
+    # Driver registration
+    st.write("### Driver Registration")
+    driver_name = st.text_input("Driver Name")
+    vehicle = st.selectbox("Vehicle Type", ['car', 'van', 'truck'])
     
-    st.write('<div class="sub-title">Available Jobs</div>', unsafe_allow_html=True)
-    cursor.execute('SELECT * FROM bookings WHERE status = "booked"')
-    bookings = cursor.fetchall()
-
-    for booking in bookings:
-        st.write(f'<div class="card"><div class="card-header">Booking ID: {booking[0]}</div>'
-                 f'Pickup: {booking[3]}<br>Dropoff: {booking[4]}<br>Vehicle: {booking[5]}</div>',
-                 unsafe_allow_html=True)
-        if st.button(f"Accept Job {booking[0]}", key=f"accept-{booking[0]}"):
-            cursor.execute('UPDATE bookings SET driver = ?, status = ? WHERE id = ?', 
-                           ("driver1", "accepted", booking[0]))
-            conn.commit()
-            st.success(f"Job {booking[0]} accepted!")
-
-    # Update location for tracking
-    st.write('<div class="sub-title">Update Location</div>', unsafe_allow_html=True)
-    new_latitude = st.number_input("Enter New Latitude", format="%.6f")
-    new_longitude = st.number_input("Enter New Longitude", format="%.6f")
-    if st.button("Update Location"):
-        cursor.execute('UPDATE tracking SET latitude = ?, longitude = ? WHERE booking_id = ?', 
-                       (new_latitude, new_longitude, booking_id))
+    if st.button("Register"):
+        cursor.execute('INSERT OR IGNORE INTO drivers (name, vehicle, available) VALUES (?, ?, ?)', 
+                       (driver_name, vehicle, 1))
         conn.commit()
-        st.success("Location updated successfully!")
+        st.success("Driver registered successfully!")
 
-    # View earnings dashboard
-    st.write('<div class="big-title">Earnings Dashboard</div>', unsafe_allow_html=True)
-    driver_name = st.text_input("Enter Driver Name")
-    earnings = calculate_earnings(driver_name)
-    st.write(f"Total Earnings: ${earnings:.2f}")
+    # Accept bookings
+    st.write("### Available Bookings")
+    cursor.execute('SELECT * FROM bookings WHERE driver = "unassigned"')
+    bookings = cursor.fetchall()
+    
+    for b in bookings:
+        st.write(f"Booking ID: {b[0]}, Pickup: {b[3]}, Dropoff: {b[4]}, Estimated Cost: ${b[6]:.2f}")
+        if st.button(f"Accept Booking {b[0]}", key=f"accept-{b[0]}"):
+            cursor.execute('UPDATE bookings SET driver = ?, status = "in transit" WHERE id = ?', 
+                           (driver_name, b[0]))
+            conn.commit()
+            st.success(f"Booking {b[0]} accepted successfully!")
+
+    # Show earnings
+    if st.button("Show My Earnings"):
+        earnings = calculate_earnings(driver_name)
+        st.write(f"**Total Earnings: ${earnings:.2f}**")
+
+    # Mark bookings as delivered
+    st.write("### My Bookings In Transit")
+    cursor.execute('SELECT * FROM bookings WHERE driver = ? AND status = "in transit"', (driver_name,))
+    in_transit_bookings = cursor.fetchall()
+    
+    for b in in_transit_bookings:
+        st.write(f"Booking ID: {b[0]}, Pickup: {b[3]}, Dropoff: {b[4]}, Estimated Cost: ${b[6]:.2f}")
+        if st.button(f"Mark as Delivered {b[0]}", key=f"delivered-{b[0]}"):
+            cursor.execute('UPDATE bookings SET status = "delivered" WHERE id = ?', (b[0],))
+            conn.commit()
+            st.success(f"Booking {b[0]} marked as delivered!")
 
 elif menu == "Admin":
     st.write('<div class="big-title">Admin Dashboard</div>', unsafe_allow_html=True)
 
-    # Detailed Analytics Section
-    st.write('<div class="big-title">Analytics Overview</div>', unsafe_allow_html=True)
-    
-    cursor.execute('SELECT COUNT(*) FROM bookings')
-    total_bookings = cursor.fetchone()[0]
-    
-    cursor.execute('SELECT COUNT(*) FROM bookings WHERE status = "delivered"')
-    delivered_bookings = cursor.fetchone()[0]
-    
-    cursor.execute('SELECT AVG(rating) FROM reviews')
-    avg_rating = cursor.fetchone()[0] or 0
-
-    st.write(f"Total Bookings: {total_bookings}")
-    st.write(f"Delivered Bookings: {delivered_bookings}")
-    st.write(f"Average Rating: {avg_rating:.2f}")
-
-    # Admin log view
-    st.write('<div class="big-title">Admin Logs</div>', unsafe_allow_html=True)
-    cursor.execute('SELECT * FROM admin_logs')
-    logs = cursor.fetchall()
-    for log in logs:
-        st.write(f"Action: {log[1]}, Timestamp: {log[2]}")
-
-    # Manage Users Section
-    st.write('<div class="big-title">User Management</div>', unsafe_allow_html=True)
+    # View all users
+    st.write("### Users List")
     cursor.execute('SELECT * FROM users')
     users = cursor.fetchall()
+    
+    for u in users:
+        st.write(f"User: {u[1]}, Email: {u[2]}")
 
-    for user in users:
-        st.write(f'User ID: {user[0]}, Username: {user[1]}, Email: {user[2]}')
-        if st.button(f"Remove User {user[0]}", key=f"remove-user-{user[0]}"):
-            cursor.execute('DELETE FROM users WHERE id = ?', (user[0],))
-            conn.commit()
-            log_admin_action(f"Removed user {user[1]}")
-            st.success(f"User {user[1]} removed.")
-
-    # Manage Drivers Section
-    st.write('<div class="big-title">Driver Management</div>', unsafe_allow_html=True)
-    cursor.execute('SELECT * FROM drivers')
-    drivers = cursor.fetchall()
-
-    for driver in drivers:
-        st.write(f'Driver ID: {driver[0]}, Name: {driver[1]}, Vehicle: {driver[2]}, Available: {driver[3]}')
-        if st.button(f"Toggle Availability {driver[0]}", key=f"toggle-driver-{driver[0]}"):
-            new_availability = 1 - driver[3]  # Toggle availability
-            cursor.execute('UPDATE drivers SET available = ? WHERE id = ?', (new_availability, driver[0]))
-            conn.commit()
-            status = "available" if new_availability else "not available"
-            st.success(f"Driver {driver[1]} is now {status}.")
-
-    # Manage Bookings Section
-    st.write('<div class="big-title">Booking Management</div>', unsafe_allow_html=True)
+    # View all bookings
+    st.write("### All Bookings")
     cursor.execute('SELECT * FROM bookings')
     bookings = cursor.fetchall()
 
-    for booking in bookings:
-        st.write(f'Booking ID: {booking[0]}, User: {booking[1]}, Driver: {booking[2]}, '
-                 f'Status: {booking[7]}')
-        if st.button(f"Complete Booking {booking[0]}", key=f"complete-booking-{booking[0]}"):
-            cursor.execute('UPDATE bookings SET status = ? WHERE id = ?', ("delivered", booking[0]))
-            conn.commit()
-            log_admin_action(f"Completed booking {booking[0]}")
-            st.success(f"Booking {booking[0]} completed.")
+    for b in bookings:
+        st.write(f"Booking ID: {b[0]}, User: {b[1]}, Driver: {b[2]}, Status: {b[7]}")
 
-    # Review Moderation Section
-    st.write('<div class="big-title">Review Management</div>', unsafe_allow_html=True)
-    cursor.execute('SELECT * FROM reviews')
-    reviews = cursor.fetchall()
+    # Admin action logs
+    st.write("### Admin Logs")
+    cursor.execute('SELECT * FROM admin_logs ORDER BY timestamp DESC')
+    logs = cursor.fetchall()
+    
+    for log in logs:
+        st.write(f"{log[1]} - {log[2]}")
 
-    for review in reviews:
-        st.write(f'Review ID: {review[0]}, Booking ID: {review[1]}, Rating: {review[2]}, Feedback: {review[3]}')
-        if st.button(f"Delete Review {review[0]}", key=f"delete-review-{review[0]}"):
-            cursor.execute('DELETE FROM reviews WHERE id = ?', (review[0],))
-            conn.commit()
-            log_admin_action(f"Deleted review {review[0]}")
-            st.success(f"Review {review[0]} deleted.")
-
-# Close the database connection
-conn.close()
+    if st.button("Clear Logs"):
+        cursor.execute('DELETE FROM admin_logs')
+        conn.commit()
+        st.success("Logs cleared!")
