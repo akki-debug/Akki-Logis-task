@@ -33,7 +33,7 @@ st.image("Logistic image.png", caption="Logistics Management", use_column_width=
 conn = sqlite3.connect('logistics.db')
 cursor = conn.cursor()
 
-# Create tables for users, drivers, bookings, goods, reviews, tracking, admin logs if they don't exist
+# Create tables for users, drivers, bookings, reviews, tracking if they don't exist
 cursor.execute('''CREATE TABLE IF NOT EXISTS users 
                   (id INTEGER PRIMARY KEY, username TEXT, email TEXT, password TEXT)''')
 
@@ -42,18 +42,14 @@ cursor.execute('''CREATE TABLE IF NOT EXISTS bookings
                    vehicle_type TEXT, estimated_cost REAL, status TEXT, favorite_driver INTEGER DEFAULT 0)''')
 
 cursor.execute('''CREATE TABLE IF NOT EXISTS drivers
-                  (id INTEGER PRIMARY KEY, name TEXT, vehicle TEXT, available INTEGER, experience INTEGER, 
-                   earnings REAL DEFAULT 0, vehicle_capacity REAL, average_rating REAL DEFAULT 0)''')
+                  (id INTEGER PRIMARY KEY, name TEXT, vehicle TEXT, available INTEGER, 
+                   experience INTEGER, earnings REAL DEFAULT 0, vehicle_capacity INTEGER)''')
 
 cursor.execute('''CREATE TABLE IF NOT EXISTS tracking
                   (id INTEGER PRIMARY KEY, booking_id INTEGER, latitude REAL, longitude REAL)''')
 
 cursor.execute('''CREATE TABLE IF NOT EXISTS reviews 
                   (id INTEGER PRIMARY KEY, booking_id INTEGER, rating INTEGER, feedback TEXT)''')
-
-cursor.execute('''CREATE TABLE IF NOT EXISTS goods
-                  (id INTEGER PRIMARY KEY, booking_id INTEGER, description TEXT, 
-                   weight REAL, dimensions TEXT, type TEXT)''')
 
 cursor.execute('''CREATE TABLE IF NOT EXISTS admin_logs 
                   (id INTEGER PRIMARY KEY, action TEXT, timestamp TEXT)''')
@@ -110,6 +106,35 @@ def calculate_earnings(driver_name):
     earnings = cursor.fetchone()[0] or 0
     return earnings
 
+# Insert sample drivers data (20 drivers)
+drivers_data = [
+    ('John Doe', 'truck', 1, 5, 0, 1000),
+    ('Jane Smith', 'van', 1, 3, 0, 800),
+    ('Robert Johnson', 'car', 1, 7, 0, 500),
+    ('Emily Davis', 'truck', 1, 10, 0, 1200),
+    ('Michael Brown', 'van', 1, 4, 0, 900),
+    ('David Wilson', 'truck', 1, 6, 0, 1300),
+    ('Sarah Lee', 'car', 1, 2, 0, 600),
+    ('Daniel Harris', 'van', 1, 5, 0, 1000),
+    ('Olivia Martinez', 'truck', 1, 9, 0, 1500),
+    ('William Clark', 'car', 1, 8, 0, 550),
+    ('Sophia Robinson', 'van', 1, 6, 0, 950),
+    ('James Lewis', 'truck', 1, 12, 0, 1700),
+    ('Grace Walker', 'car', 1, 4, 0, 650),
+    ('Liam Hall', 'van', 1, 5, 0, 1050),
+    ('Isabella Allen', 'truck', 1, 15, 0, 2000),
+    ('Ethan Young', 'car', 1, 7, 0, 700),
+    ('Mia King', 'van', 1, 10, 0, 1200),
+    ('Benjamin Scott', 'truck', 1, 13, 0, 1800),
+    ('Charlotte Green', 'car', 1, 3, 0, 550),
+    ('Lucas Wright', 'van', 1, 8, 0, 1100)
+]
+
+for driver in drivers_data:
+    cursor.execute('''INSERT INTO drivers (name, vehicle, available, experience, earnings, vehicle_capacity) 
+                      VALUES (?, ?, ?, ?, ?, ?)''', driver)
+conn.commit()
+
 # Title and app navigation
 st.title("On-Demand Logistics Platform")
 menu = st.sidebar.radio("Navigation", ["User", "Driver", "Admin"])
@@ -143,190 +168,68 @@ if menu == "User":
     
     st.write(f"**Estimated Price: ${estimated_cost:.2f}**")
 
-    # Capture goods information
-    goods_description = st.text_input("Goods Description")
-    goods_weight = st.number_input("Goods Weight (kg)", min_value=0.0)
-    goods_dimensions = st.text_input("Goods Dimensions (LxWxH in cm)")
-    goods_type = st.text_input("Goods Type (e.g., fragile, electronics)")
-
     # Booking section
     st.write('<div class="big-title">Book Now</div>', unsafe_allow_html=True)
     booking_date = st.date_input("Select Booking Date", datetime.now())
     booking_time = st.time_input("Select Booking Time", datetime.now().time())
 
-    if st.button("Book Now", key="user-book"):
-        booking_datetime = datetime.combine(booking_date, booking_time)
-        if booking_datetime > datetime.now():
-            try:
-                cursor.execute('''INSERT INTO bookings (user, driver, pickup, dropoff, vehicle_type, 
-                                 estimated_cost, status) VALUES (?, ?, ?, ?, ?, ?, ?)''', 
-                               (username, "unassigned", pickup, dropoff, vehicle_type, estimated_cost, "booked"))
-                booking_id = cursor.lastrowid
-
-                # Insert goods data
-                cursor.execute('''INSERT INTO goods (booking_id, description, weight, dimensions, type) 
-                                  VALUES (?, ?, ?, ?, ?)''', 
-                               (booking_id, goods_description, goods_weight, goods_dimensions, goods_type))
-                conn.commit()
-                st.success("Booking and goods details added successfully!")
-                
-                # Send confirmation email
-                send_email(email, "Booking Confirmation", f"Your booking for a {vehicle_type} has been confirmed for {booking_datetime}!")
-            except sqlite3.Error as e:
-                st.error(f"An error occurred while booking: {e}")
-        else:
-            st.error("Booking time must be in the future.")
-
-    # Option to cancel booking
-    booking_id = st.number_input("Enter Booking ID to cancel", min_value=1)
-    if st.button("Cancel Booking"):
-        try:
-            cursor.execute('DELETE FROM bookings WHERE id = ? AND status = "booked"', (booking_id,))
+    if st.button("Confirm Booking"):
+        # Assign a random available driver
+        cursor.execute('SELECT name FROM drivers WHERE vehicle = ? AND available = 1 ORDER BY RANDOM() LIMIT 1', (vehicle_type,))
+        driver = cursor.fetchone()
+        if driver:
+            cursor.execute('INSERT INTO bookings (user, driver, pickup, dropoff, vehicle_type, estimated_cost, status) VALUES (?, ?, ?, ?, ?, ?, ?)', 
+                           (username, driver[0], pickup, dropoff, vehicle_type, estimated_cost, 'confirmed'))
             conn.commit()
-            st.success(f"Booking {booking_id} canceled successfully!")
-        except sqlite3.Error as e:
-            st.error(f"An error occurred while canceling the booking: {e}")
-
-    # Option to track bookings
-    st.write('<div class="sub-title">Track Your Booking</div>', unsafe_allow_html=True)
-    booking_id = st.number_input("Enter Booking ID to track", min_value=1, key="track-booking")
-    if st.button("Track Booking"):
-        cursor.execute('SELECT * FROM bookings WHERE id = ?', (booking_id,))
-        booking = cursor.fetchone()
-        if booking:
-            pickup_coords = tuple(map(float, booking[3].split(',')))
-            dropoff_coords = tuple(map(float, booking[4].split(',')))
-
-            # Display booking status and map
-            st.write(f"**Booking Status:** {booking[7]}")
-            st.write("### Pickup & Dropoff Locations:")
-            map_obj = folium.Map(location=pickup_coords, zoom_start=12)
-            folium.Marker(pickup_coords, tooltip="Pickup", icon=folium.Icon(color="green")).add_to(map_obj)
-            folium.Marker(dropoff_coords, tooltip="Dropoff", icon=folium.Icon(color="red")).add_to(map_obj)
-            folium.PolyLine([pickup_coords, dropoff_coords], color="blue").add_to(map_obj)
-            st_folium(map_obj, width=700, height=500)
+            send_email(email, "Booking Confirmed", f"Your booking with {driver[0]} has been confirmed!")
+            st.success(f"Booking confirmed with {driver[0]}")
         else:
-            st.error(f"No booking found with ID {booking_id}.")
+            st.error("No available drivers at the moment.")
 
-    # Provide feedback on booking
-    st.write('<div class="sub-title">Provide Feedback</div>', unsafe_allow_html=True)
-    rating = st.slider("Rate your experience (1-5)", 1, 5)
-    feedback = st.text_area("Additional feedback/comments")
-    if st.button("Submit Feedback"):
-        try:
-            cursor.execute('INSERT INTO reviews (booking_id, rating, feedback) VALUES (?, ?, ?)', (booking_id, rating, feedback))
-            conn.commit()
-            st.success("Feedback submitted successfully!")
-        except sqlite3.Error as e:
-            st.error(f"An error occurred while submitting feedback: {e}")
-
-elif menu == "Driver":
+if menu == "Driver":
     st.write('<div class="big-title">Driver Dashboard</div>', unsafe_allow_html=True)
-    
-    driver_name = st.text_input("Enter your name")
-    
-    if st.button("Login/Register"):
-        cursor.execute('INSERT OR IGNORE INTO drivers (name, vehicle, available, experience, vehicle_capacity) VALUES (?, ?, ?, ?, ?)', 
-                       (driver_name, "van", 1, 5, 800))
-        conn.commit()
-        st.success(f"Welcome, {driver_name}! You are now registered.")
-    
-    st.write("### Available Bookings")
-    cursor.execute('SELECT * FROM bookings WHERE status = "booked" AND driver = "unassigned"')
-    bookings = cursor.fetchall()
-    for booking in bookings:
-        st.write(f"**Booking ID:** {booking[0]}, Pickup: {booking[3]}, Dropoff: {booking[4]}, Estimated Cost: ${booking[6]:.2f}")
-        if st.button("Accept Booking", key=f"accept-{booking[0]}"):
-            cursor.execute('UPDATE bookings SET driver = ?, status = "accepted" WHERE id = ?', (driver_name, booking[0]))
+
+    # Driver login
+    driver_name = st.text_input("Driver Name")
+    if st.button("Login as Driver"):
+        cursor.execute('SELECT * FROM drivers WHERE name = ?', (driver_name,))
+        driver = cursor.fetchone()
+        if driver:
+            st.success(f"Welcome, {driver_name}!")
+        else:
+            st.error("Driver not found.")
+
+    # Earnings and status
+    if driver_name:
+        earnings = calculate_earnings(driver_name)
+        st.write(f"**Total Earnings: ${earnings:.2f}**")
+
+        if st.button("Mark as Available"):
+            cursor.execute('UPDATE drivers SET available = 1 WHERE name = ?', (driver_name,))
             conn.commit()
-            st.success(f"Booking {booking[0]} accepted successfully!")
-    
-    st.write("### Current Deliveries")
-    cursor.execute('SELECT * FROM bookings WHERE driver = ? AND status = "accepted"', (driver_name,))
-    deliveries = cursor.fetchall()
-    for delivery in deliveries:
-        st.write(f"**Booking ID:** {delivery[0]}, Pickup: {delivery[3]}, Dropoff: {delivery[4]}, Estimated Cost: ${delivery[6]:.2f}")
-        if st.button("Mark as Delivered", key=f"delivered-{delivery[0]}"):
-            cursor.execute('UPDATE bookings SET status = "delivered" WHERE id = ?', (delivery[0],))
+            st.success("Marked as available.")
+        
+        if st.button("Mark as Unavailable"):
+            cursor.execute('UPDATE drivers SET available = 0 WHERE name = ?', (driver_name,))
             conn.commit()
-            st.success(f"Booking {delivery[0]} marked as delivered!")
-    
-    # Show driver earnings
-    st.write("### Driver Earnings")
-    earnings = calculate_earnings(driver_name)
-    st.write(f"**Total Earnings:** ${earnings:.2f}")
+            st.success("Marked as unavailable.")
 
-    # Option for drivers to update their location (mocked with random GPS data)
-    if st.button("Update GPS Location"):
-        new_location = get_mock_gps()
-        cursor.execute('INSERT INTO tracking (booking_id, latitude, longitude) VALUES (?, ?, ?)', (booking_id, new_location[0], new_location[1]))
-        conn.commit()
-        st.success(f"GPS location updated: {new_location}")
+if menu == "Admin":
+    st.write('<div class="big-title">Admin Panel</div>', unsafe_allow_html=True)
 
-elif menu == "Admin":
-    st.write('<div class="big-title">Admin Dashboard</div>', unsafe_allow_html=True)
-
-    # Show all bookings
-    st.write('<div class="sub-title">All Bookings</div>', unsafe_allow_html=True)
-    cursor.execute('SELECT * FROM bookings')
-    all_bookings = cursor.fetchall()
-    df_bookings = pd.DataFrame(all_bookings, columns=['ID', 'User', 'Driver', 'Pickup', 'Dropoff', 'Vehicle', 'Cost', 'Status'])
-    st.dataframe(df_bookings)
-
-    # Show all users
-    st.write('<div class="sub-title">All Users</div>', unsafe_allow_html=True)
-    cursor.execute('SELECT * FROM users')
-    all_users = cursor.fetchall()
-    df_users = pd.DataFrame(all_users, columns=['ID', 'Username', 'Email', 'Password'])
-    st.dataframe(df_users)
-
-    # Show all drivers
-    st.write('<div class="sub-title">All Drivers</div>', unsafe_allow_html=True)
-    cursor.execute('SELECT * FROM drivers')
-    all_drivers = cursor.fetchall()
-    df_drivers = pd.DataFrame(all_drivers, columns=['ID', 'Name', 'Vehicle', 'Available', 'Experience', 'Earnings', 'Capacity', 'Rating'])
+    # Display driver stats
+    st.write('<div class="sub-title">Driver Statistics</div>', unsafe_allow_html=True)
+    cursor.execute('SELECT name, vehicle, experience, earnings FROM drivers')
+    drivers = cursor.fetchall()
+    df_drivers = pd.DataFrame(drivers, columns=['Name', 'Vehicle', 'Experience', 'Earnings'])
     st.dataframe(df_drivers)
 
-    # Show all feedback/reviews
-    st.write('<div class="sub-title">All Feedback/Reviews</div>', unsafe_allow_html=True)
-    cursor.execute('SELECT * FROM reviews')
-    all_reviews = cursor.fetchall()
-    df_reviews = pd.DataFrame(all_reviews, columns=['ID', 'Booking ID', 'Rating', 'Feedback'])
-    st.dataframe(df_reviews)
-
-    # Show admin logs
-    st.write('<div class="sub-title">Admin Logs</div>', unsafe_allow_html=True)
-    cursor.execute('SELECT * FROM admin_logs')
-    admin_logs = cursor.fetchall()
-    df_logs = pd.DataFrame(admin_logs, columns=['ID', 'Action', 'Timestamp'])
+    # Logs
+    st.write('<div class="sub-title">System Logs</div>', unsafe_allow_html=True)
+    cursor.execute('SELECT action, timestamp FROM admin_logs ORDER BY timestamp DESC')
+    logs = cursor.fetchall()
+    df_logs = pd.DataFrame(logs, columns=['Action', 'Timestamp'])
     st.dataframe(df_logs)
 
-# Sample drivers data
-drivers_data = [
-    ('John Doe', 'truck', 1, 5, 0, 1000),
-    ('Jane Smith', 'van', 1, 3, 0, 800),
-    ('Robert Johnson', 'car', 1, 7, 0, 500),
-    ('Emily Davis', 'truck', 1, 10, 0, 1200),
-    ('Michael Brown', 'van', 1, 4, 0, 900),
-    ('Sarah Wilson', 'car', 1, 2, 0, 400),
-    ('David Martinez', 'truck', 1, 8, 0, 1500),
-    ('Laura Taylor', 'van', 1, 6, 0, 750),
-    ('Chris Anderson', 'car', 1, 5, 0, 550),
-    ('Jessica Thomas', 'truck', 1, 9, 0, 1300),
-    ('Daniel Jackson', 'van', 1, 3, 0, 850),
-    ('Sophia White', 'car', 1, 1, 0, 300),
-    ('Matthew Harris', 'truck', 1, 7, 0, 1000),
-    ('Olivia Lewis', 'van', 1, 5, 0, 800),
-    ('James Lee', 'car', 1, 6, 0, 600),
-    ('Isabella Clark', 'truck', 1, 4, 0, 1100),
-    ('Alexander Walker', 'van', 1, 2, 0, 700),
-    ('Mia Hall', 'car', 1, 3, 0, 500),
-    ('William Allen', 'truck', 1, 8, 0, 1400),
-    ('Charlotte Young', 'van', 1, 6, 0, 750)
-]
-
-# Insert sample drivers into the database
-for driver in drivers_data:
-    cursor.execute('INSERT INTO drivers (name, vehicle, available, experience, vehicle_capacity) VALUES (?, ?, ?, ?, ?)', driver)
-conn.commit()
-st.success("20 sample drivers added to the database successfully!")
+# Close the database connection when done
+conn.close()
