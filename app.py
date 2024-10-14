@@ -154,8 +154,7 @@ if menu == "User":
         conn.commit()
         st.success("Booking successful!")
         
-        # Send confirmation email
-        send_email(email, "Booking Confirmation", f"Your booking for a {vehicle_type} on {booking_date} has been confirmed!")
+      
 
     # Option to cancel booking
     booking_id = st.number_input("Enter Booking ID to cancel", min_value=1)
