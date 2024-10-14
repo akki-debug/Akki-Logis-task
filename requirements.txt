@@ -2,3 +2,9 @@ streamlit
 geopy
 folium
 streamlit-folium
+sqlite3 
+random  
+matplotlib
+altair
+smtplib  
+email  
