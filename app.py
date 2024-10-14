@@ -245,42 +245,43 @@ elif menu == "Driver":
     st.write(f"Total Earnings: ${earnings:.2f}")
 
 # Admin Section
-# Admin Section
+# Admin Interface
 elif menu == "Admin":
     st.write('<div class="big-title">Admin Dashboard</div>', unsafe_allow_html=True)
-    
+
     # View all bookings
-    st.write('<div class="sub-title">All Bookings</div>', unsafe_allow_html=True)
+    st.write("### All Bookings")
     cursor.execute('SELECT * FROM bookings')
     all_bookings = cursor.fetchall()
 
     if all_bookings:
-        df = pd.DataFrame(all_bookings, columns=['ID', 'User', 'Driver', 'Pickup', 'Dropoff', 'Vehicle Type', 'Estimated Cost', 'Status', 'Favorite Driver'])
-        st.dataframe(df)
+        # Check the structure of all_bookings
+        st.write(f"Total bookings found: {len(all_bookings)}")
+        
+        # Print the structure of the first booking for inspection
+        st.write("Example booking data:", all_bookings[0])
+        
+        # Check the number of columns in the first booking
+        num_columns = len(all_bookings[0])
+        st.write(f"Number of columns in data: {num_columns}")
+        
+        # Create a DataFrame with the correct number of columns
+        # Ensure that the columns match the actual number of columns returned
+        expected_columns = ["ID", "User", "Driver", "Pickup", "Dropoff", "Vehicle Type", "Estimated Cost", "Status"]
+
+        # Adjust expected_columns if necessary
+        if num_columns == 9:  # Adjust this condition based on what extra column is present
+            expected_columns.append("Extra Column Name")  # Replace with the actual name of the extra column
+
+        try:
+            df = pd.DataFrame(all_bookings, columns=expected_columns)
+            st.dataframe(df)
+        except ValueError as e:
+            st.error(f"Error creating DataFrame: {e}")
     else:
-        st.write("No bookings found.")
-
-    # View all drivers
-    st.write('<div class="sub-title">All Drivers</div>', unsafe_allow_html=True)
-    cursor.execute('SELECT * FROM drivers')
-    all_drivers = cursor.fetchall()
-
-    if all_drivers:
-        # Ensure the structure matches the expected column names
-        df = pd.DataFrame(all_drivers, columns=['ID', 'Name', 'Vehicle', 'Available', 'Experience', 'Earnings', 'Vehicle Capacity'])
-        st.dataframe(df)
-    else:
-        st.write("No drivers found.")
-
-    # Admin actions log
-    st.write('<div class="sub-title">Admin Logs</div>', unsafe_allow_html=True)
-    cursor.execute('SELECT * FROM admin_logs')
-    admin_logs = cursor.fetchall()
-
-    if admin_logs:
-        df = pd.DataFrame(admin_logs, columns=['ID', 'Action', 'Timestamp'])
-        st.dataframe(df)
-    else:
-        st.write("No admin actions logged.")
+        st.warning("No bookings found.")
 
 
+
+# Close the database connection at the end
+conn.close()
