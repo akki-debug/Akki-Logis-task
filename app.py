@@ -245,18 +245,34 @@ elif menu == "Admin":
     st.write("### All Bookings")
     cursor.execute('SELECT * FROM bookings')
     all_bookings = cursor.fetchall()
-    
+
     if all_bookings:
         # Check the structure of all_bookings
         st.write(f"Total bookings found: {len(all_bookings)}")
         
+        # Print the structure of the first booking for inspection
+        st.write("Example booking data:", all_bookings[0])
+        
+        # Check the number of columns in the first booking
+        num_columns = len(all_bookings[0])
+        st.write(f"Number of columns in data: {num_columns}")
+        
+        # Create a DataFrame with the correct number of columns
+        # Ensure that the columns match the actual number of columns returned
+        expected_columns = ["ID", "User", "Driver", "Pickup", "Dropoff", "Vehicle Type", "Estimated Cost", "Status"]
+
+        # Adjust expected_columns if necessary
+        if num_columns == 9:  # Adjust this condition based on what extra column is present
+            expected_columns.append("Extra Column Name")  # Replace with the actual name of the extra column
+
         try:
-            df = pd.DataFrame(all_bookings, columns=["ID", "User", "Driver", "Pickup", "Dropoff", "Vehicle Type", "Estimated Cost", "Status"])
+            df = pd.DataFrame(all_bookings, columns=expected_columns)
             st.dataframe(df)
         except ValueError as e:
             st.error(f"Error creating DataFrame: {e}")
     else:
         st.warning("No bookings found.")
+
 
 
 # Close the database connection at the end
